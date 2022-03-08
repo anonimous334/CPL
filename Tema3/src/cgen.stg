@@ -1,0 +1,328 @@
+sequence(e) ::= "<e; separator=\"\n\">"
+sequenceSpaced(e) ::= "<e; separator=\"\n\n\">"
+
+basicTag(name, tag) ::= <<
+_<name>_tag:
+	.word	<tag>
+>>
+
+program(basicTags, boolTag, consts, classNames, classObjs, protObjs, dispTables, methods) ::= <<
+.data
+    .align	2
+    .globl	class_nameTab
+    .globl	Int_protObj
+    .globl	String_protObj
+    .globl	bool_const_false
+    .globl	bool_const_true
+    .globl	Main_protObj
+    .globl	_int_tag
+    .globl	_string_tag
+    .globl	_bool_tag
+
+<basicTags>
+
+bool_const_false:
+    .word	<boolTag>
+    .word	4
+    .word	Bool_dispTab
+    .word	0
+bool_const_true:
+    .word	<boolTag>
+    .word	4
+    .word	Bool_dispTab
+    .word	1
+<consts>
+
+class_nameTab:
+<classNames>
+
+class_objTab:
+<classObjs>
+
+<protObjs>
+
+<dispTables>
+
+heap_start:
+    .word	0
+
+.text
+    .globl	Int_init
+    .globl	String_init
+    .globl	Bool_init
+    .globl	Main_init
+    .globl	Main.main
+
+<methods>
+>>
+
+initMethod(class, parent, attrib) ::= <<
+<class>_init:
+	addiu	$sp $sp -12
+	sw		$fp 12($sp)
+	sw		$s0 8($sp)
+	sw		$ra 4($sp)
+	addiu	$fp $sp 4
+	move	$s0 $a0
+<if (parent)>
+	jal		<parent>_init
+<endif>
+<attrib>
+	move	$a0 $s0
+	lw		$fp 12($sp)
+	lw		$s0 8($sp)
+	lw		$ra 4($sp)
+	addiu	$sp $sp 12
+	jr		$ra
+>>
+
+objTabEntry(class) ::= <<
+	.word	<class>_protObj
+	.word	<class>_init
+>>
+
+protObj(class, tag, words, attrib) ::= <<
+<class>_protObj:
+    .word	<tag>
+    .word	<words>
+    .word	<class>_dispTab
+<attrib>
+>>
+
+dispTableEntry(method) ::= <<
+	.word	<method>
+>>
+
+dispatchTable(class, methods) ::= <<
+<class>_dispTab:
+<methods>
+>>
+
+intConst(val, tag) ::= <<
+int_const_<val>:
+	.word	<tag>
+	.word	4
+	.word	Int_dispTab
+	.word	<val>
+>>
+
+stringConst(label, tag, str, len, wordCount) ::= <<
+str_const_<label>:
+	.word	<tag>
+	.word	<wordCount>
+	.word	String_dispTab
+	.word	<len>
+	.asciiz	"<str>"
+	.align	2
+>>
+
+method(class, name, body, numPops) ::= <<
+<class>.<name>:
+	addiu	$sp $sp -12
+	sw		$fp 12($sp)
+	sw		$s0 8($sp)
+	sw		$ra 4($sp)
+	addiu	$fp $sp 4
+	move	$s0 $a0
+<body>
+	lw		$fp 12($sp)
+	lw		$s0 8($sp)
+	lw		$ra 4($sp)
+	addiu	$sp $sp <numPops>
+	jr		$ra
+>>
+
+literal(addr) ::= <<
+	la		$a0 <addr>
+>>
+
+dispatch(method, idx, filename, line, explicit, specific, params, offset) ::= <<
+<params>
+<if (explicit)>
+<explicit>
+<else>
+	move    $a0 $s0
+<endif>
+	bnez    $a0 dispatch_<method>_<idx>
+	la      $a0 <filename>
+	li      $t1 <line>
+	jal     _dispatch_abort
+dispatch_<method>_<idx>:
+<if (specific)>
+	la		$t1 <specific>_dispTab
+<else>
+	lw      $t1 8($a0)
+<endif>
+    lw      $t1 <offset>($t1)
+    jalr    $t1
+>>
+
+attribute(offset) ::= <<
+	lw      $a0 <offset>($s0)
+>>
+
+dispatchParam(param) ::= <<
+<param>
+	sw      $a0 0($sp)
+	addiu   $sp $sp -4
+>>
+
+storeAttrib(val, offset) ::= <<
+<val>
+	sw      $a0 <offset>($s0)
+>>
+
+loadVar(offset) ::= <<
+	lw		$a0 <offset>($fp)
+>>
+
+storeVar(val, offset) ::= <<
+<val>
+	sw		$a0 <offset>($fp)
+>>
+
+initLet(space) ::= <<
+	addiu	$sp $sp <space>
+>>
+
+new(type) ::= <<
+	la		$a0 <type>_protObj
+	jal		Object.copy
+	jal		<type>_init
+>>
+
+newSelfType() ::= <<
+	la		$t1 class_objTab
+	lw		$t2 0($s0)
+	sll		$t2 $t2 3
+	addu	$t1 $t1 $t2
+	sw		$t1 0($sp)
+	addiu	$sp $sp -4
+	lw		$a0 0($t1)
+	jal		Object.copy
+	lw		$t1 4($sp)
+	addiu	$sp $sp 4
+	lw		$t1 4($t1)
+	jalr	$t1
+>>
+
+if(cond, then, els, cnt) ::= <<
+<cond>
+	lw		$t1 12($a0)
+    beqz	$t1 else_<cnt>
+<then>
+    b		endif_<cnt>
+else_<cnt>:
+<els>
+endif_<cnt>:
+>>
+
+isvoid(expr, cnt) ::= <<
+<expr>
+    move	$t1 $a0
+    la		$a0 bool_const_true
+    beqz	$t1 isvoid_<cnt>
+    la		$a0 bool_const_false
+isvoid_<cnt>:
+>>
+
+not(expr, cnt) ::= <<
+<expr>
+	lw		$t1 12($a0)
+	la		$a0 bool_const_true
+	beqz	$t1 not_<cnt>
+	la		$a0 bool_const_false
+not_<cnt>:
+>>
+
+neg(expr) ::= <<
+<expr>
+	lw		$t1 12($a0)
+	neg		$t1 $t1
+	sw		$t1 12($a0)
+>>
+
+arithm(expr1, expr2, op) ::= <<
+<expr1>
+	sw		$a0 0($sp)
+	addiu	$sp $sp -4
+<expr2>
+	jal		Object.copy
+	lw		$t1 4($sp)
+	addiu	$sp $sp 4
+	lw		$t1 12($t1)
+	lw		$t2 12($a0)
+	<op>	$t1 $t1 $t2
+	sw		$t1 12($a0)
+>>
+
+equal(expr1, expr2, cnt) ::= <<
+<expr1>
+	sw		$a0 0($sp)
+	addiu	$sp $sp -4
+<expr2>
+	lw		$t1 4($sp)
+	addiu	$sp $sp 4
+	move	$t2 $a0
+	la		$a0 bool_const_true
+	beq		$t1 $t2 eq_<cnt>
+	la		$a1 bool_const_false
+	jal		equality_test
+eq_<cnt>:
+>>
+
+cmp(expr1, expr2, op, cnt) ::= <<
+<expr1>
+	sw		$a0 0($sp)
+	addiu	$sp $sp -4
+<expr2>
+	lw		$t1 4($sp)
+	addiu	$sp $sp 4
+	lw		$t1 12($t1)
+	lw		$t2 12($a0)
+	la		$a0 bool_const_true
+	<op>	$t1 $t2 compare_<cnt>
+	la		$a0 bool_const_false
+compare_<cnt>:
+>>
+
+while(cond, body, cnt) ::= <<
+while_<cnt>:
+<cond>
+	lw		$t1 12($a0)
+	beqz	$t1 end_while_<cnt>
+<body>
+	b		while_<cnt>
+end_while_<cnt>:
+	li		$a0 0
+>>
+
+case(expr, branches, filename, line, cnt) ::= <<
+	addiu	$sp $sp -4
+	move	$s0 $a0
+<expr>
+	bnez    $a0 case_<cnt>
+	la      $a0 <filename>
+	li      $t1 <line>
+	jal     _case_abort2
+case_<cnt>:
+	sw		$a0 -4($fp)
+	lw		$t1 0($a0)
+<branches>
+	lw		$a0 -4($fp)
+	jal		_case_abort
+end_case_<cnt>:
+	addiu	$sp $sp 4
+>>
+
+caseBranch(expr, lo, hi, cnt, nextIdx) ::= <<
+	blt		$t1 <lo> case_branch_<nextIdx>
+	bgt     $t1 <hi> case_branch_<nextIdx>
+<expr>
+	b		end_case_<cnt>
+case_branch_<nextIdx>:
+>>
+
+self() ::= <<
+	move	$a0 $s0
+>>
